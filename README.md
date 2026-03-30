@@ -1,12 +1,12 @@
 ---
 title: SanskritEnv
 emoji: 📜
-colorFrom: orange
+colorFrom: red
 colorTo: yellow
 sdk: docker
 app_port: 7860
 license: apache-2.0
-short_description: OpenEnv-compatible RL environment for Sanskrit manuscript interpretation
+short_description: RL environment for Sanskrit manuscript interpretation
 ---
 
 # SanskritEnv
