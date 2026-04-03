@@ -30,16 +30,17 @@ India's **Gyan Bharatam Mission** (Union Budget 2025–26) is digitizing over
 and scanned more than 60,000 rare texts and 1.4 crore pages. The problem:
 digitization has outpaced translation by orders of magnitude. The bottleneck
 is not scanning technology — it is the shortage of scholars who can read
-classical Sanskrit across its three major difficulty layers:
+classical Sanskrit across its four major difficulty layers:
 
 | Layer | Problem | What blocks automation |
 |-------|---------|----------------------|
 | Lexical | A single term (e.g. *agni*) has 4–6 domain-specific meanings | No contextual disambiguation |
+| Morphological | Compound words (*samāsa*) must be classified before they can be parsed | Requires grammatical meta-knowledge |
 | Phonological | Compound words (*sandhi*) have multiple valid splits | Requires grammatical + contextual reasoning |
 | Discourse | Pronouns and implicit subjects span multiple verses | Requires cross-sentence coreference tracking |
 
 SanskritEnv provides a structured benchmark where AI agents must solve exactly
-these three problems, with fully deterministic graders and dense reward signals.
+these four problems, with fully deterministic graders and dense reward signals.
 No existing OpenEnv environment addresses Sanskrit, ancient linguistics, or
 cultural heritage preservation.
 
@@ -55,12 +56,13 @@ correct linguistic interpretation from four deterministically-graded options.
 Agent ──[ManuscriptAction]──► SanskritEnv ──[ManuscriptObservation + reward]──► Agent
 ```
 
-Three tasks, escalating difficulty:
+Four tasks, escalating difficulty:
 
 | Task | ID | Difficulty | Steps/episode | Core challenge |
 |------|----|-----------|--------------|----------------|
 | Glossary Anchoring | `glossary_anchoring` | Easy | 1 | Domain-specific term disambiguation |
 | Sandhi Resolution | `sandhi_resolution` | Medium | 1 | Phonological compound splitting |
+| Samāsa Classification | `samasa_classification` | Medium | 1 | Grammatical compound type identification |
 | Referential Coherence | `referential_coherence` | Hard | 4–7 | Cross-verse pronoun tracking |
 
 ---
@@ -74,9 +76,11 @@ Measured with `llama-3.3-70b-versatile` (Groq), ReAct + Memory architecture,
 |------|-------|---------|
 | Task 1 — Glossary Anchoring (Easy) | `1.000` | `±0.000` |
 | Task 2 — Sandhi Resolution (Medium) | `1.000` | `±0.000` |
-| Task 3 — Referential Coherence (Hard) | `0.840` | `±0.102` |
+| Task 3 — Samāsa Classification (Medium) | `—` | `—` |
+| Task 4 — Referential Coherence (Hard) | `0.840` | `±0.102` |
 
 *Run `python baseline.py` to reproduce. Results are saved to `baseline_results.json`.*
+*Task 3 (Samāsa) baseline pending — run `python baseline.py --task samasa_classification` to generate.*
 
 ---
 
@@ -100,7 +104,7 @@ Any string not in the list returns `reward=0.0` and terminates the episode.
 ```python
 ManuscriptObservation(
     # Always present
-    task_id: str,                    # "glossary_anchoring" | "sandhi_resolution" | "referential_coherence"
+    task_id: str,                    # "glossary_anchoring" | "sandhi_resolution" | "samasa_classification" | "referential_coherence"
     episode_id: str,                 # Unique episode identifier
     source_text_iast: str,           # Sanskrit in IAST transliteration
     source_text_devanagari: str,     # Sanskrit in Devanagari script
@@ -118,10 +122,10 @@ ManuscriptObservation(
     target_term_iast: Optional[str],           # The term to interpret
     active_glossary: Optional[Dict[str, str]], # Domain term reference
 
-    # Task 2 only
-    compound_iast: Optional[str],              # The compound word to split
+    # Task 2 and Task 3 (Samāsa)
+    compound_iast: Optional[str],              # The compound word to split or classify
 
-    # Task 3 only
+    # Task 4 only
     verses_so_far: Optional[List[Dict]],       # All verses seen: [{verse_num, iast, english}]
     current_verse_num: Optional[int],          # Current verse being processed
     consistency_history: Optional[List[Dict]], # Prior checkpoint answers: [{question, answer}]
@@ -153,7 +157,21 @@ episode end. This provides gradient information even for partially correct answe
 | Wrong split | `+0.00` |
 | Invalid selection | `+0.00` + episode ends |
 
-### Task 3 — Referential Coherence
+### Task 3 — Samāsa Classification
+
+| Outcome | Reward |
+|---------|--------|
+| Correct compound type identified | `+1.00` |
+| Adjacent type (e.g. Karmadharaya instead of Tatpurusha) | `+0.40` |
+| Wrong compound type | `+0.00` |
+| Invalid selection | `+0.00` + episode ends |
+
+Six samāsa types are tested: **Tatpurusha**, **Karmadharaya**, **Dvigu**,
+**Dvandva**, **Bahuvrihi**, and **Avyayibhava** — covering the full classical
+Pāṇinian taxonomy. Each episode provides the compound in both IAST and
+Devanagari alongside its source passage and English context.
+
+### Task 4 — Referential Coherence
 
 | Outcome | Reward |
 |---------|--------|
@@ -168,7 +186,7 @@ final `reward` when `done=True`.
 
 ## Grader design — why no LLM, no BLEU
 
-All three graders are fully deterministic:
+All four graders are fully deterministic:
 - **No LLM judge calls** — judges in Phase 1 will check this
 - **No BLEU/ROUGE** — unreliable for Sanskrit free word order
 - **Exact string match** against pre-annotated answer tables embedded in data JSON
@@ -227,7 +245,7 @@ export SANSKRIT_ENV_URL=http://localhost:7860
 python baseline.py
 
 # Single task
-python baseline.py --task referential_coherence
+python baseline.py --task samasa_classification
 ```
 
 ---
@@ -257,7 +275,29 @@ with SanskritEnv(base_url="https://Aditya_Raj-sanskrit-env.hf.space").sync() as 
     print(f"Score: {result.reward}")
 ```
 
-### Task 3 — multi-step with memory
+### Task 3 — Samāsa Classification
+
+```python
+from client import SanskritEnv
+from models import ManuscriptAction
+
+with SanskritEnv(base_url="https://Aditya_Raj-sanskrit-env.hf.space").sync() as env:
+    result = env.reset(task_id="samasa_classification")
+    obs = result.observation
+
+    print(obs.source_text_iast)   # Full passage
+    print(obs.compound_iast)      # The compound to classify e.g. "raja-putrah"
+    print(obs.decision_prompt)    # "What type of samasa is 'raja-putrah'?"
+    print(obs.candidate_options)  # 4 compound types with explanations
+
+    result = env.step(ManuscriptAction(
+        selected_option=obs.candidate_options[0],
+        reasoning="First member qualifies second via genitive — tatpurusha."
+    ))
+    print(f"Score: {result.reward}")
+```
+
+### Task 4 — Referential Coherence (multi-step with memory)
 
 ```python
 from client import SanskritEnv
@@ -270,17 +310,13 @@ with SanskritEnv(base_url="https://Aditya_Raj-sanskrit-env.hf.space").sync() as 
     obs = result.observation
 
     while not obs.done:
-        # Show verses and question
         if obs.verses_so_far:
             for v in obs.verses_so_far:
                 print(f"  Verse {v['verse_num']}: {v['english']}")
 
         print(f"\nQuestion: {obs.decision_prompt}")
 
-        # Agent picks an option (replace with your model)
-        selected = obs.candidate_options[0]
-
-        # Update rolling memory
+        selected = obs.candidate_options[0]  # replace with your model
         rolling_memory += f"\n• {obs.decision_prompt} → {selected}"
 
         result = env.step(ManuscriptAction(selected_option=selected))
@@ -294,7 +330,7 @@ with SanskritEnv(base_url="https://Aditya_Raj-sanskrit-env.hf.space").sync() as 
 
 ```python
 # Fixed seed ensures same episode is loaded every run
-result = env.reset(task_id="sandhi_resolution", seed=42)
+result = env.reset(task_id="samasa_classification", seed=42)
 ```
 
 ---
@@ -319,7 +355,7 @@ The included `baseline.py` implements a **ReAct + Memory** loop:
 ```
 
 The `rolling_memory` string grows by one line per step and is injected
-into every prompt. For Task 3 this looks like:
+into every prompt. For Task 4 this looks like:
 
 ```
 ── What you have established so far in this episode ──
@@ -341,16 +377,18 @@ annotated by the project authors. No proprietary data is used.
 
 | Text | Domain | Task |
 |------|--------|------|
-| Charaka Samhita | Ayurveda | Task 1 |
-| Ashtanga Hridayam | Ayurveda | Task 1 |
+| Charaka Samhita | Ayurveda | Task 1, 3 |
+| Ashtanga Hridayam | Ayurveda | Task 1, 3 |
 | Sushruta Samhita | Ayurveda | Task 1 |
-| Aryabhatiya | Astronomy | Task 1 |
-| Arthashastra | Political philosophy | Task 1, 3 |
-| Bhagavad Gita | Vedanta philosophy | Task 1, 2, 3 |
+| Aryabhatiya | Astronomy | Task 1, 3 |
+| Arthashastra | Political philosophy | Task 1, 3, 4 |
+| Bhagavad Gita | Vedanta philosophy | Task 1, 2, 4 |
 | Mundaka Upanishad | Vedanta philosophy | Task 2 |
 | Brihadaranyaka Upanishad | Vedanta philosophy | Task 2 |
-| Ramayana (Ayodhya Kanda) | Narrative | Task 2, 3 |
-| Mahabharata (Vana Parva) | Narrative | Task 3 |
+| Vishnu Sahasranama | Philosophy | Task 3 |
+| Meghaduta (Kalidasa) | Narrative | Task 3 |
+| Ramayana (Ayodhya Kanda) | Narrative | Task 2, 3, 4 |
+| Mahabharata (Vana Parva) | Narrative | Task 3, 4 |
 
 ---
 
@@ -372,7 +410,8 @@ Contributions welcome. Highest-priority areas:
    (must include IAST, Devanagari, English context, 4 options, correct answer)
 2. **New domains** — Jyotisha (astrology), Natya Shastra (dramaturgy), Vedic hymns
 3. **Harder sandhi cases** — especially involving anusvara, visarga, and vowel coalescence
-4. **Multi-language target** — currently English-only; Hindi or regional language target translations
+4. **More samāsa episodes** — especially Dvigu and rarer Avyayibhava patterns
+5. **Multi-language target** — currently English-only; Hindi or regional language target translations
 
 Please open an issue before starting a large contribution.
 
@@ -409,4 +448,3 @@ Annotations, graders, and environment code are original to this project.
 - [Gyan Bharatam Mission](https://indiaculture.gov.in) — the real-world problem this addresses
 - [Monier-Williams Sanskrit Dictionary](https://www.sanskrit-lexicon.uni-koeln.de) — lexical reference
 - [Digital Corpus of Sanskrit](https://www.sanskrit-linguistics.org/dcs/) — annotated corpus reference
-```
