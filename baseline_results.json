@@ -3,9 +3,59 @@
     "task_id": "glossary_anchoring",
     "label": "Task 1 \u2014 Glossary Anchoring (Easy)",
     "model": "Qwen/Qwen2.5-72B-Instruct",
-    "episodes": 3,
+    "episodes": 5,
     "seed": 42,
     "scores": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "mean": 1.0,
+    "stddev": 0.0
+  },
+  {
+    "task_id": "sandhi_resolution",
+    "label": "Task 2 \u2014 Sandhi Resolution (Medium)",
+    "model": "Qwen/Qwen2.5-72B-Instruct",
+    "episodes": 5,
+    "seed": 42,
+    "scores": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "mean": 1.0,
+    "stddev": 0.0
+  },
+  {
+    "task_id": "samasa_classification",
+    "label": "Task 3 \u2014 Samasa Classification (Medium)",
+    "model": "Qwen/Qwen2.5-72B-Instruct",
+    "episodes": 5,
+    "seed": 42,
+    "scores": [
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "mean": 0.4,
+    "stddev": 0.4899
+  },
+  {
+    "task_id": "referential_coherence",
+    "label": "Task 4 \u2014 Referential Coherence (Hard)",
+    "model": "Qwen/Qwen2.5-72B-Instruct",
+    "episodes": 5,
+    "seed": 42,
+    "scores": [
+      0.0,
+      0.0,
       0.0,
       0.0,
       0.0

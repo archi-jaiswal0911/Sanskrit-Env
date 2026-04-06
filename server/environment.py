@@ -39,6 +39,7 @@ class SanskritEnvironment(Environment):
 
     def __init__(self):
         self._sessions = {} # {session_id: session_dict}
+        self._active_session_id: Optional[str] = None
         self._glossary_grader = GlossaryGrader()
         self._sandhi_grader = SandhiGrader()
         self._coherence_grader = CoherenceGrader()
@@ -111,13 +112,37 @@ class SanskritEnvironment(Environment):
             session["t3_phase"] = "checkpoint" if ep.get("consistency_checkpoints") else "final"
 
         self._sessions[session_id] = session
+        self._active_session_id = session_id
         return self._build_initial_observation(ep, session)
+
+    def _resolve_session(self, request_id: Optional[str]) -> Optional[dict]:
+        """
+        Resolve session for both HTTP and WebSocket flows.
+
+        HTTP UI passes request_id explicitly.
+        OpenEnv WebSocket flow does not pass request_id to env.step(), so we
+        fall back to the most recently reset session (or the only session).
+        """
+        if request_id and request_id in self._sessions:
+            return self._sessions[request_id]
+
+        if self._active_session_id and self._active_session_id in self._sessions:
+            return self._sessions[self._active_session_id]
+
+        if len(self._sessions) == 1:
+            only_id = next(iter(self._sessions))
+            self._active_session_id = only_id
+            return self._sessions[only_id]
+
+        return None
 
     def step(self, action: ManuscriptAction, request_id: Optional[str] = None, **kwargs) -> ManuscriptObservation:
         """
         Process one decision from the agent.
         """
-        session = self._sessions.get(request_id)
+        session = self._resolve_session(request_id)
+        if request_id and request_id in self._sessions:
+            self._active_session_id = request_id
         if not session:
             return ManuscriptObservation(
                 task_id="none",

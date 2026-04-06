@@ -30,6 +30,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from typing import List
 
 from dotenv import load_dotenv
 
@@ -55,10 +56,27 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACEHUB_API_TOKEN")
 ENV_URL = os.environ.get("SANSKRIT_ENV_URL", "http://localhost:7860")
-DEFAULT_MODEL = os.environ.get("HF_MODEL", "meta-llama/Llama-3.3-70B-Instruct")
+DEFAULT_MODEL = os.environ.get("HF_MODEL", "Qwen/Qwen2.5-72B-Instruct")
 HF_ROUTER_URL = os.environ.get("HF_ROUTER_URL", "https://router.huggingface.co/v1/chat/completions")
+
+HF_MODEL_CANDIDATES = [
+    model.strip()
+    for model in os.environ.get(
+        "HF_MODEL_CANDIDATES",
+        "Qwen/Qwen2.5-72B-Instruct,meta-llama/Llama-3.3-70B-Instruct,Qwen/Qwen2.5-7B-Instruct,google/gemma-2-9b-it,mistralai/Mistral-7B-Instruct-v0.3,HuggingFaceH4/zephyr-7b-beta",
+    ).split(",")
+    if model.strip()
+]
+AUTO_MODEL_FALLBACK = _env_bool("HF_AUTO_MODEL_FALLBACK", True)
 
 TEMPERATURE = _env_float("HF_TEMPERATURE", 0.0)
 MAX_TOKENS = _env_int("HF_MAX_TOKENS", 512)
@@ -206,6 +224,110 @@ def _extract_router_text(payload: dict) -> str:
     return str(content).strip()
 
 
+def _parse_router_error_text(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return "unknown provider error"
+
+    try:
+        payload = json.loads(text)
+        if isinstance(payload, dict):
+            err = payload.get("error")
+            if isinstance(err, dict):
+                msg = err.get("message")
+                if isinstance(msg, str) and msg.strip():
+                    return msg.strip()
+            if isinstance(err, str) and err.strip():
+                return err.strip()
+    except json.JSONDecodeError:
+        pass
+
+    lowered = text.lower()
+    title_start = lowered.find("<title>")
+    if title_start != -1:
+        title_end = lowered.find("</title>", title_start)
+        if title_end != -1:
+            title = text[title_start + len("<title>"):title_end].strip()
+            if title:
+                return title
+
+    return " ".join(text.split())[:220]
+
+
+def _is_credits_exhausted(message: str) -> bool:
+    msg = (message or "").lower()
+    return "depleted your monthly included credits" in msg or "purchase pre-paid credits" in msg
+
+
+def _probe_model_access(model: str) -> tuple[bool, str]:
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "Reply with OK only."},
+            {"role": "user", "content": "OK"},
+        ],
+        "temperature": 0,
+        "max_tokens": 4,
+    }
+
+    request_body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    req = urllib.request.Request(
+        HF_ROUTER_URL,
+        data=request_body,
+        headers=headers,
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=min(REQUEST_TIMEOUT, 30)) as response:
+            if 200 <= response.status < 300:
+                return True, "ok"
+            return False, f"HTTP {response.status}"
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="ignore")
+        parsed = _parse_router_error_text(error_body)
+        return False, f"{exc.code}: {parsed}"
+    except urllib.error.URLError as exc:
+        return False, f"network: {exc.reason}"
+    except Exception as exc:
+        return False, f"error: {exc}"
+
+
+def select_model_for_run(requested_model: str) -> str:
+    ordered: List[str] = [requested_model]
+    ordered.extend(m for m in HF_MODEL_CANDIDATES if m != requested_model)
+
+    print("Checking HF model availability for current token/provider...")
+    unavailable = []
+
+    for model in ordered:
+        ok, detail = _probe_model_access(model)
+        if ok:
+            if model == requested_model:
+                print(f"  Using requested model: {model}")
+            else:
+                print(f"  Requested model unavailable; auto-fallback to: {model}")
+            return model
+
+        unavailable.append((model, detail))
+        print(f"  Unavailable: {model} ({detail})")
+
+        if _is_credits_exhausted(detail):
+            raise RuntimeError(
+                f"HF Router credits exhausted for this token. {detail}"
+            )
+
+    summary = "; ".join(f"{model} -> {reason}" for model, reason in unavailable[:4])
+    raise RuntimeError(
+        "No available HF chat model found for this token/provider setup. "
+        f"Tried: {summary}"
+    )
+
+
 def call_llm(model: str, system: str, user: str) -> str:
     """
     Call Hugging Face Router chat completions endpoint with exponential backoff.
@@ -247,7 +369,8 @@ def call_llm(model: str, system: str, user: str) -> str:
                 print(f"    [router {exc.code}] waiting {wait}s before retry {attempt + 1}/3...")
                 time.sleep(wait)
                 continue
-            raise RuntimeError(f"Router request failed ({exc.code}): {error_body[:400]}")
+            parsed = _parse_router_error_text(error_body)
+            raise RuntimeError(f"Router request failed ({exc.code}): {parsed}")
         except urllib.error.URLError as exc:
             wait = RETRY_WAIT * (2 ** attempt)
             print(f"    [network] {exc.reason}; waiting {wait}s before retry {attempt + 1}/3...")
@@ -364,8 +487,15 @@ def run_task(task_id: str, label: str, model: str) -> dict:
                 score = run_episode(env, model, task_id, seed, verbose=True)
                 scores.append(score)
             except Exception as exc:
-                print(f"  ERROR: {exc}")
+                message = str(exc)
+                print(f"  ERROR: {message}")
                 scores.append(0.0)
+                if _is_credits_exhausted(message):
+                    remaining = EPISODES_PER_TASK - len(scores)
+                    if remaining > 0:
+                        scores.extend([0.0] * remaining)
+                    print("  Stopping task early: HF Router credits are exhausted.")
+                    break
 
     mean   = sum(scores) / len(scores)
     stddev = (sum((s - mean) ** 2 for s in scores) / len(scores)) ** 0.5
@@ -398,7 +528,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         default=DEFAULT_MODEL,
-        help="HF model ID to use (default from HF_MODEL or meta-llama/Llama-3.3-70B-Instruct)",
+        help="HF model ID to use (default from HF_MODEL or Qwen/Qwen2.5-72B-Instruct)",
+    )
+    parser.add_argument(
+        "--no-auto-fallback",
+        action="store_true",
+        help="Disable automatic fallback to an available HF model.",
     )
     parser.add_argument(
         "--episodes",
@@ -423,9 +558,23 @@ if __name__ == "__main__":
         print("  Or set HUGGINGFACEHUB_API_TOKEN in .env")
         sys.exit(1)
 
+    effective_model = args.model
+    auto_fallback_enabled = AUTO_MODEL_FALLBACK and not args.no_auto_fallback
+    if auto_fallback_enabled:
+        try:
+            effective_model = select_model_for_run(args.model)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}")
+            print("Hint: try a supported model explicitly, e.g. --model Qwen/Qwen2.5-72B-Instruct")
+            sys.exit(1)
+    elif args.no_auto_fallback:
+        print("Model fallback disabled via --no-auto-fallback")
+    else:
+        print("Model fallback disabled via HF_AUTO_MODEL_FALLBACK=0")
+
     print(f"\nSanskritEnv Baseline — HF Router API + ReAct + Memory")
     print(f"Environment: {ENV_URL}")
-    print(f"Model:       {args.model}")
+    print(f"Model:       {effective_model}")
     print(f"Router URL:  {HF_ROUTER_URL}")
     print(f"Architecture: ReAct + rolling_memory (Think->Act->Observe->Update)")
 
@@ -446,7 +595,7 @@ if __name__ == "__main__":
 
     results = []
     for task_id, label in tasks_to_run.items():
-        results.append(run_task(task_id, label, args.model))
+        results.append(run_task(task_id, label, effective_model))
 
     # ── Summary table ────────────────────────────────────────────────────
     print(f"\n{'='*65}")
