@@ -194,3 +194,15 @@ async def model_run(payload: ModelEpisodeRequest):
         raise HTTPException(status_code=500, detail=f"Unexpected model run error: {exc}")
 
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+def main() -> None:
+    import uvicorn
+
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = _env_int("PORT", 7860)
+    uvicorn.run("server.app:app", host=host, port=port)
+
+
+if __name__ == "__main__":
+    main()

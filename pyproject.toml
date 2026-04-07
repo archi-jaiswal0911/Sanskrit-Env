@@ -20,3 +20,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = []
+
+[project.scripts]
+server = "server.app:main"
