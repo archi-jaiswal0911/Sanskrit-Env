@@ -7,7 +7,7 @@ sdk: docker
 app_port: 7860
 license: apache-2.0
 short_description: RL environment for Sanskrit manuscript interpretation
-huggingFace url: https://huggingface.co/spaces/Adityahars/Sanskrit-env
+huggingFace-url: https://huggingface.co/spaces/Adityahars/Sanskrit-env
 ---
 
 # SanskritEnv
