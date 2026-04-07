@@ -1,5 +1,5 @@
 """
-baseline.py — SanskritEnv Baseline Inference Script (single Cloudflare model + HF fallback)
+inference.py — SanskritEnv Baseline Inference Script (single Cloudflare model + HF fallback)
 
 Architecture: ReAct + Memory loop
     Think   -> agent reasons using full verse context + rolling_memory of prior decisions
