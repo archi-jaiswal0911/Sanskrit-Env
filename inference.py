@@ -129,6 +129,11 @@ BASELINE_TASK = ((os.environ.get("BASELINE_TASK", "all") or "all").strip().lower
 EPISODES_PER_TASK = _env_int("EPISODES_PER_TASK", 15)
 RANDOM_SEED = _env_int("RANDOM_SEED", 42)
 
+# Mandatory env-var aliases required by evaluation harness
+API_BASE_URL = os.environ.get("API_BASE_URL", CF_CHAT_COMPLETIONS_URL)
+MODEL_NAME = os.environ.get("MODEL_NAME", BASELINE_MODEL)
+BENCHMARK_NAME = "sanskrit-env"
+
 TASK_LABELS = {
     "glossary_anchoring": "Task 1 — Glossary Anchoring (Easy)",
     "sandhi_resolution": "Task 2 — Sandhi Resolution (Medium)",
@@ -535,6 +540,30 @@ def call_llm(model: str, system: str, user: str) -> str:
         return call_hf_fallback_llm(system=system, user=user)
 
 
+# ── Structured stdout logging ([START] / [STEP] / [END]) ─────────────────────
+
+
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    error_val = error if error else "null"
+    done_val = str(done).lower()
+    print(
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
+        flush=True,
+    )
+
+
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
+        flush=True,
+    )
+
+
 # ── Option matching ───────────────────────────────────────────────────────────
 
 def match_to_option(raw_answer: str, candidate_options: list) -> str:
@@ -593,14 +622,8 @@ def run_episode(
     """
     Run one complete episode using the ReAct + Memory architecture.
 
-    Loop:
-        while not done:
-            user_prompt = build_user_prompt(obs, rolling_memory)
-            raw_answer  = call_llm(model, system, user_prompt)
-            selected    = match_to_option(raw_answer, obs.candidate_options)
-            result      = env.step(ManuscriptAction(selected_option=selected, reasoning=raw_answer))
-            rolling_memory = update_rolling_memory(rolling_memory, obs, selected)
-            obs = result.observation
+    Emits structured [START], [STEP], [END] logs to stdout as required
+    by the evaluation harness.
 
     Returns the final episode score (0.0–1.0).
     """
@@ -608,34 +631,53 @@ def run_episode(
     obs = result.observation
     rolling_memory = ""   # starts empty every episode
     step = 0
+    rewards: List[float] = []
+    score = 0.0
+    success = False
 
-    while not obs.done:
-        step += 1
-        user_prompt = build_user_prompt(obs, rolling_memory)
-        raw_answer  = call_llm(model, SYSTEM_PROMPT, user_prompt)
-        selected    = match_to_option(raw_answer, obs.candidate_options)
+    log_start(task=task_id, env=BENCHMARK_NAME, model=MODEL_NAME)
 
-        if verbose:
-            print(f"    Step {step}: selected → '{selected[:60]}'")
+    try:
+        while not obs.done:
+            step += 1
+            user_prompt = build_user_prompt(obs, rolling_memory)
+            raw_answer  = call_llm(model, SYSTEM_PROMPT, user_prompt)
+            selected    = match_to_option(raw_answer, obs.candidate_options)
 
-        # Update memory BEFORE stepping (so the summary is of current decision)
-        rolling_memory = update_rolling_memory(rolling_memory, obs, selected)
+            if verbose:
+                print(f"    Step {step}: selected → '{selected[:60]}'")
 
-        result = env.step(ManuscriptAction(
-            selected_option=selected,
-            confidence=0.8,
-            reasoning=raw_answer,
-        ))
-        obs = result.observation
+            # Update memory BEFORE stepping (so the summary is of current decision)
+            rolling_memory = update_rolling_memory(rolling_memory, obs, selected)
 
-        if obs.step_reward is not None and verbose:
-            print(f"            reward: {obs.step_reward:.2f} | cumulative: {obs.cumulative_score:.2f}")
+            result = env.step(ManuscriptAction(
+                selected_option=selected,
+                confidence=0.8,
+                reasoning=raw_answer,
+            ))
+            obs = result.observation
 
-    final_score = obs.reward if obs.reward is not None else 0.0
+            reward = obs.step_reward if obs.step_reward is not None else 0.0
+            done = obs.done
+            error = None
+            rewards.append(reward)
+
+            log_step(step=step, action=selected, reward=reward, done=done, error=error)
+
+            if obs.step_reward is not None and verbose:
+                print(f"            reward: {obs.step_reward:.2f} | cumulative: {obs.cumulative_score:.2f}")
+
+        score = obs.reward if obs.reward is not None else 0.0
+        score = min(max(score, 0.0), 1.0)  # clamp to [0, 1]
+        success = score > 0.0
+
+    finally:
+        log_end(success=success, steps=step, score=score, rewards=rewards)
+
     if verbose:
-        print(f"    Episode done — final score: {final_score:.4f}")
+        print(f"    Episode done — final score: {score:.4f}")
 
-    return final_score
+    return score
 
 
 # ── Task runner ───────────────────────────────────────────────────────────────
