@@ -213,7 +213,7 @@ Two runs with the same seed will always produce identical scores.
 
 ```bash
 # Clone
-git clone https://huggingface.co/spaces/Aditya_Raj/sanskrit-env
+git clone https://huggingface.co/spaces/Adityahars/Sanskrit-env
 cd sanskrit-env
 
 # Install
