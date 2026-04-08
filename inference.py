@@ -145,6 +145,12 @@ if not RUN_CURRICULUM and TASK_NAME not in VALID_TASKS:
 BENCHMARK_NAME = os.environ.get("BENCHMARK_NAME", "sanskrit-env")
 RANDOM_SEED = _env_int("RANDOM_SEED", 42)
 MAX_STEPS = _env_int("MAX_STEPS", 8)
+TASK_MAX_STEPS = {
+    "glossary_anchoring": 1,
+    "sandhi_resolution": 1,
+    "samasa_classification": 1,
+    "referential_coherence": 7,
+}
 TARGET_STEPS_PER_TASK = _env_int("TARGET_STEPS_PER_TASK", 10)
 TARGET_TOTAL_STEPS = TARGET_STEPS_PER_TASK * len(TASK_SEQUENCE)
 MAX_CURRICULUM_EPISODES = _env_int(
@@ -477,12 +483,17 @@ def run_episode(
     step_offset: int,
     step_limit: int,
 ) -> Tuple[int, List[float], float, bool]:
-    result = env.reset(task_id=task_id, seed=seed)
-    observation = result.observation
+    try:
+        result = env.reset(task_id=task_id, seed=seed)
+        observation = result.observation
+    except Exception as exc:
+        _debug(f"env.reset failed for task {task_id}: {_single_line(str(exc))}")
+        return 0, [], 0.0, False
     rolling_memory = ""
     episode_steps = 0
     episode_rewards: List[float] = []
-    effective_step_limit = max(1, min(MAX_STEPS, step_limit))
+    task_step_cap = TASK_MAX_STEPS.get(task_id, MAX_STEPS)
+    effective_step_limit = max(1, min(task_step_cap, step_limit))
 
     while not getattr(observation, "done", False) and episode_steps < effective_step_limit:
         current_observation = observation
