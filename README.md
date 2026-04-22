@@ -194,7 +194,7 @@ episode end. This provides gradient information even for partially correct answe
 |---------|--------|
 | Exact correct domain meaning | `+1.00` |
 | Partial credit option (related but imprecise) | `+0.40` |
-| Wrong meaning | `+0.00` |
+| Wrong meaning | `+0.50` |
 | Invalid selection (not in candidate_options) | `+0.00` + episode ends |
 
 ### Task 2 — Sandhi Resolution
@@ -203,7 +203,7 @@ episode end. This provides gradient information even for partially correct answe
 |---------|--------|
 | Correct phonological split | `+1.00` |
 | Adjacent analysis (same first component, slightly wrong) | `+0.25` |
-| Wrong split | `+0.00` |
+| Wrong split | `+0.50` |
 | Invalid selection | `+0.00` + episode ends |
 
 ### Task 3 — Samāsa Classification
@@ -212,7 +212,7 @@ episode end. This provides gradient information even for partially correct answe
 |---------|--------|
 | Correct compound type identified | `+1.00` |
 | Adjacent type (e.g. Karmadharaya instead of Tatpurusha) | `+0.40` |
-| Wrong compound type | `+0.00` |
+| Wrong compound type | `+0.50` |
 | Invalid selection | `+0.00` + episode ends |
 
 Six samāsa types are tested: **Tatpurusha**, **Karmadharaya**, **Dvigu**,
@@ -226,7 +226,7 @@ Devanagari alongside its source passage and English context.
 |---------|--------|
 | Each correct checkpoint answer | `+0.10` |
 | Correct final antecedent identification | `+0.70` |
-| Wrong checkpoint or final answer | `+0.00` |
+| Wrong checkpoint or final answer | `+0.50` |
 
 All final episode scores are shaped into the **0.50–0.95** range before being
 returned as the final `reward` when `done=True`.
