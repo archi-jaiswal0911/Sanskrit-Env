@@ -166,7 +166,7 @@ annotated by the project authors. No proprietary data is used.
 
 ## Baseline benchmark matrix
 
-`baseline.py` now uses a single model selector env var: `BASELINE_MODEL`.
+`inference.py` now uses a single model selector env var: `BASELINE_MODEL`.
 To compare multiple Cloudflare models, update `BASELINE_MODEL` and rerun baseline once per model.
 If Cloudflare is rate-limited, the script automatically falls back to HF Router model
 `Qwen/Qwen2.5-7B-Instruct` (from the curated free-tier list in `server/model_agent.py`).
@@ -313,10 +313,10 @@ export HF_SPACE_URL=https://adityahars-sanskrit-env.hf.space
 # export HF_SPACE_URL=https://huggingface.co/spaces/Adityahars/Sanskrit-env
 
 # All tasks
-python baseline.py
+python inference.py
 
 # Single task
-python baseline.py --task referential_coherence
+python inference.py --task referential_coherence
 ```
 
 ### Run inference.py
@@ -351,7 +351,7 @@ result = env.reset(task_id="sandhi_resolution", seed=42)
 
 ## Agent architecture (baseline)
 
-The included `baseline.py` implements a **ReAct + Memory** loop:
+The included `inference.py` implements a **ReAct + Memory** loop:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
